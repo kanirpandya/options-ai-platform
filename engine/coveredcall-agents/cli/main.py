@@ -12,6 +12,7 @@ import argparse
 import json
 import logging
 import sys
+from coveredcall_agents.api.run_analysis import run_analysis
 
 from coveredcall_agents.config.default_config import DEFAULT_CONFIG
 from coveredcall_agents.fundamentals.mode import FundamentalsMode
