@@ -11,8 +11,12 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-CLI = [sys.executable, "-m", "cli.main"]
+from coveredcall_agents.fundamentals.mode import FundamentalsMode
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CLI = [sys.executable, "-m", "coveredcall_agents.cli.main"]
 
 TICKER = os.environ.get("TICKER", "AAPL")
 MODEL = os.environ.get("MODEL", "llama3.2:3b")

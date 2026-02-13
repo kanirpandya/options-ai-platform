@@ -16,9 +16,15 @@ dependencies = [
   "langgraph>=0.0.40",
   "yfinance>=0.2.40"
 ]
+
+# -----------------------------
+# CLI entrypoints (clean + legacy)
+# -----------------------------
 [project.scripts]
-covered-call-agentic = "cli.main:main"
-covered-call = "cli.main:main"
+coveredcall-agents = "coveredcall_agents.cli.main:main"
+covered-call = "coveredcall_agents.cli.main:main"
+covered-call-agentic = "coveredcall_agents.cli.main:main"
+
 
 [project.optional-dependencies]
 dev = [
@@ -28,21 +34,25 @@ dev = [
   "mypy>=1.5",
 ]
 
+
 [tool.setuptools]
-# Use automatic package discovery (recommended)
+# Use automatic package discovery
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["coveredcall_agents*", "cli*"]
+include = ["coveredcall_agents*"]
+
 
 [tool.black]
 line-length = 100
 target-version = ["py310"]
 
+
 [tool.ruff]
 line-length = 100
 select = ["E", "F", "I"]
 ignore = ["E501"]
+
 
 [tool.mypy]
 python_version = "3.10"

@@ -28,7 +28,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from coveredcall_agents.graph.state import GraphState
 from coveredcall_agents.graph.covered_call_graph import CoveredCallAgentsGraph
+
 
 
 def run_analysis(*, ticker: str, config: Mapping[str, Any]) -> GraphState:

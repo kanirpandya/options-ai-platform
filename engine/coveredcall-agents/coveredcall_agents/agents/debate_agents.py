@@ -327,11 +327,12 @@ def proposal_node(state: GraphState) -> dict[str, Any]:
         updates: dict[str, Any] = {}
 
         if enabled:
-            print(
-                "[DEBUG proposal_node]",
-                "report? True",
-                "appendix?", bool(getattr(rep, "appendix", None)),
-                "action?", getattr(rep, "action", None) is not None,
+            lgr = with_ctx(logger, LogCtx(node="proposal_node", ticker=state.ticker))
+            lgr.debug(
+                "report? %s appendix? %s action? %s",
+                True,
+                bool(getattr(rep, "appendix", None)),
+                getattr(rep, "action", None) is not None,
             )
 
         # Phase 2: action/action_reason (only if missing)

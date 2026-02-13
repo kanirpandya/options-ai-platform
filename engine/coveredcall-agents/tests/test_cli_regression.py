@@ -46,7 +46,7 @@ def run_cli(*args: str, env_extra: dict[str, str] | None = None) -> RunResult:
         env.update(env_extra)
 
     p = subprocess.run(
-        [sys.executable, "-m", "cli.main", *args],
+        [sys.executable, "-m", "coveredcall_agents.cli.main", *args],
         cwd=str(REPO_ROOT),
         env=env,
         stdout=subprocess.PIPE,
@@ -223,7 +223,7 @@ def test_broken_pipe_does_not_crash() -> None:
         [
             sys.executable,
             "-m",
-            "cli.main",
+            "coveredcall_agents.cli.main",
             "--ticker",
             "AAPL",
             "--fundamentals-mode",
