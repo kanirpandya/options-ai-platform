@@ -1,9 +1,8 @@
-cat > .gitignore <<'EOF'
 # Python
 __pycache__/
 *.py[cod]
 *.egg-info/
-.dist-info/
+*.dist-info/
 build/
 dist/
 
@@ -25,4 +24,3 @@ htmlcov/
 out*.json
 trace*.log
 *.log
-EOF
