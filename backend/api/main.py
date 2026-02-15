@@ -17,11 +17,13 @@ from fastapi import FastAPI
 
 from backend.api.settings import get_settings
 from backend.api.routes.health import router as health_router
-from backend.api.routes.analysis import router as analysis_router
+from backend.api.routes.v1 import v1_router
 
 from backend.api.middleware.request_id import RequestIdMiddleware
 from backend.api.contracts.request_id_policy import RequestIdPolicy
+
 from backend.api.logging.logging_config import configure_logging
+from backend.api.error_handlers import register_error_handlers
 
 
 def create_app() -> FastAPI:
@@ -33,8 +35,10 @@ def create_app() -> FastAPI:
 
     app.add_middleware(RequestIdMiddleware, policy=RequestIdPolicy())
 
+    register_error_handlers(app)
+
     app.include_router(health_router)
-    app.include_router(analysis_router)
+    app.include_router(v1_router)
 
     return app
 

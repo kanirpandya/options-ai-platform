@@ -16,6 +16,8 @@ Created:
 from __future__ import annotations
 
 from typing import Any, Literal
+import re
+from pydantic import field_validator
 
 from pydantic import BaseModel, Field
 
@@ -23,11 +25,13 @@ from pydantic import BaseModel, Field
 class AnalyzeRequest(BaseModel):
     ticker: str = Field(..., description="Ticker symbol, e.g. AAPL")
 
-    provider: str | None = Field(default=None, description="Fundamentals provider key (e.g. yfinance)")
-    mode: str | None = Field(default=None, description="Optional; forwarded if engine supports it")
-    force_debate: bool = Field(default=False, description="Force debate path if supported")
-
-    config_overrides: dict[str, Any] | None = Field(default=None, description="Top-level config overrides (shallow)")
+    @field_validator("ticker")
+    @classmethod
+    def validate_ticker(cls, v: str) -> str:
+        t = v.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9.\-]{1,12}", t):
+            raise ValueError("Invalid ticker format. Use letters/digits and optional '.' or '-' (1–12 chars).")
+        return t
 
 
 class SnapshotQuality(BaseModel):
