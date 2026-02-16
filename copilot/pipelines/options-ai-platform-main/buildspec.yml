@@ -1,5 +1,6 @@
-# Buildspec runs in the build stage of your environment pipeline to generate the environment CloudFormation stack config.
+# Buildspec runs in the build stage of your environment pipeline to generate the environment + service CloudFormation stack config.
 version: 0.2
+
 phases:
   install:
     commands:
@@ -9,10 +10,12 @@ phases:
       - wget -q https://ecs-cli-v2-release.s3.amazonaws.com/copilot-linux-v1.34.1
       - mv ./copilot-linux-v1.34.1 ./copilot-linux
       - chmod +x ./copilot-linux
+
   build:
     commands:
       - echo "Run your tests"
       # - make test
+
   post_build:
     commands:
       - ls -l
@@ -20,16 +23,27 @@ phases:
       - export CI="true"
       - pipeline=$(cat $CODEBUILD_SRC_DIR/copilot/pipelines/options-ai-platform-main/manifest.yml | ruby -ryaml -rjson -e 'puts JSON.pretty_generate(YAML.load(ARGF))')
       - stages=$(echo $pipeline | jq -r '.stages[].name')
-      # Generate the cloudformation templates.
+
+      # Generate the CloudFormation templates for environments AND the api service.
       - >
         for env in $stages; do
+          echo "Packaging environment: $env";
           ./copilot-linux env package -n $env --output-dir './infrastructure' --upload-assets --force;
           if [ $? -ne 0 ]; then
-            echo "Cloudformation stack and config files were not generated. Please check build logs to see if there was a manifest validation error." 1>&2;
+            echo "Environment stack and config files were not generated. Check build logs for manifest validation errors." 1>&2;
+            exit 1;
+          fi
+
+          echo "Packaging service: api for environment: $env";
+          ./copilot-linux svc package -n api -e $env --output-dir './infrastructure' --upload-assets --force;
+          if [ $? -ne 0 ]; then
+            echo "Service stack and config files were not generated. Check build logs for service manifest validation errors." 1>&2;
             exit 1;
           fi
         done;
+
       - ls -lah ./infrastructure
+
 artifacts:
   files:
     - "infrastructure/*"
