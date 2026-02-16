@@ -22,19 +22,9 @@ phases:
       - export COLOR="false"
       - export CI="true"
       - mkdir -p infrastructure
-      - echo "Parsing pipeline stages..."
-      - pipeline_json=$(ruby -ryaml -rjson -e 'puts JSON.generate(YAML.load_file("copilot/pipelines/options-ai-platform-main/manifest.yml"))')
-      - echo "$pipeline_json" | jq .
-      - stages=$(echo "$pipeline_json" | jq -r '.stages[].name')
-      - echo "Stages: $stages"
-      - |
-          for env in $stages; do
-            echo "==== Packaging environment: $env ===="
-            ./copilot-linux env package -n "$env" --output-dir "./infrastructure" --upload-assets
-
-            echo "==== Packaging service: api for environment: $env ===="
-            ./copilot-linux svc package -n "api" -e "$env" --output-dir "./infrastructure" --upload-assets
-          done
+      - echo "Packaging environment + api service for dev..."
+      - 'env="dev"; ./copilot-linux env package -n "$env" --output-dir "./infrastructure" --upload-assets'
+      - 'env="dev"; ./copilot-linux svc package -n "api" -e "$env" --output-dir "./infrastructure" --upload-assets'
       - echo "Generated artifacts:"
       - ls -lah ./infrastructure
 
