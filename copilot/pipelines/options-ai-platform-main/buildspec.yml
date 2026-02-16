@@ -1,15 +1,15 @@
+# Buildspec runs in the build stage of your environment pipeline to generate environment + service CloudFormation stacks.
 version: 0.2
 
 phases:
   install:
     commands:
       - echo "cd into $CODEBUILD_SRC_DIR"
-      - cd $CODEBUILD_SRC_DIR
+      - cd "$CODEBUILD_SRC_DIR"
       - wget -q https://ecs-cli-v2-release.s3.amazonaws.com/copilot-linux-v1.34.1
       - mv ./copilot-linux-v1.34.1 ./copilot-linux
       - chmod +x ./copilot-linux
       - ./copilot-linux --version
-      - ls -lah copilot/pipelines/options-ai-platform-main
 
   build:
     commands:
@@ -21,22 +21,20 @@ phases:
       - set -euo pipefail
       - export COLOR="false"
       - export CI="true"
-      - mkdir -p ./infrastructure
+      - mkdir -p infrastructure
       - echo "Parsing pipeline stages..."
       - pipeline_json=$(ruby -ryaml -rjson -e 'puts JSON.generate(YAML.load_file("copilot/pipelines/options-ai-platform-main/manifest.yml"))')
       - echo "$pipeline_json" | jq .
       - stages=$(echo "$pipeline_json" | jq -r '.stages[].name')
       - echo "Stages: $stages"
-
       - |
-        for env in $stages; do
-          echo "==== Packaging environment: $env ===="
-          ./copilot-linux env package -n "$env" --output-dir "./infrastructure" --upload-assets
+          for env in $stages; do
+            echo "==== Packaging environment: $env ===="
+            ./copilot-linux env package -n "$env" --output-dir "./infrastructure" --upload-assets
 
-          echo "==== Packaging service: api for environment: $env ===="
-          ./copilot-linux svc package -n "api" -e "$env" --output-dir "./infrastructure" --upload-assets
-        done
-
+            echo "==== Packaging service: api for environment: $env ===="
+            ./copilot-linux svc package -n "api" -e "$env" --output-dir "./infrastructure" --upload-assets
+          done
       - echo "Generated artifacts:"
       - ls -lah ./infrastructure
 
