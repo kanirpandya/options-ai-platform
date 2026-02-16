@@ -1,0 +1,20 @@
+# Purpose: Reduce Docker build context size for Options AI Platform containers.
+# Author: Kanir Pandya
+# Created: 2026-02-15
+
+.git
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.venv
+venv
+.env
+*.log
+.DS_Store
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist
+build
+*.egg-info
