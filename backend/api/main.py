@@ -33,6 +33,10 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.service_name, version=settings.service_version)
 
+    @app.get("/")
+    def root():
+        return {"status": "ok", "service": "options-ai-platform"}
+
     app.add_middleware(RequestIdMiddleware, policy=RequestIdPolicy())
 
     register_error_handlers(app)
