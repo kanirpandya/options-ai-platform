@@ -1,4 +1,3 @@
-# Buildspec runs in the build stage of your environment pipeline to generate the environment + service CloudFormation stack config.
 version: 0.2
 
 phases:
@@ -6,7 +5,6 @@ phases:
     commands:
       - echo "cd into $CODEBUILD_SRC_DIR"
       - cd $CODEBUILD_SRC_DIR
-      # Download the copilot linux binary. You can update this version.
       - wget -q https://ecs-cli-v2-release.s3.amazonaws.com/copilot-linux-v1.34.1
       - mv ./copilot-linux-v1.34.1 ./copilot-linux
       - chmod +x ./copilot-linux
@@ -24,20 +22,21 @@ phases:
       - pipeline=$(cat $CODEBUILD_SRC_DIR/copilot/pipelines/options-ai-platform-main/manifest.yml | ruby -ryaml -rjson -e 'puts JSON.pretty_generate(YAML.load(ARGF))')
       - stages=$(echo $pipeline | jq -r '.stages[].name')
 
-      # Generate the CloudFormation templates for environments AND the api service.
       - >
         for env in $stages; do
           echo "Packaging environment: $env";
-          ./copilot-linux env package -n $env --output-dir './infrastructure' --upload-assets --force;
+          ./copilot-linux env package -n $env --output-dir './infrastructure' --upload-assets;
+
           if [ $? -ne 0 ]; then
-            echo "Environment stack and config files were not generated. Check build logs for manifest validation errors." 1>&2;
+            echo "Environment packaging failed" 1>&2;
             exit 1;
           fi
 
           echo "Packaging service: api for environment: $env";
-          ./copilot-linux svc package -n api -e $env --output-dir './infrastructure' --upload-assets --force;
+          ./copilot-linux svc package -n api -e $env --output-dir './infrastructure' --upload-assets;
+
           if [ $? -ne 0 ]; then
-            echo "Service stack and config files were not generated. Check build logs for service manifest validation errors." 1>&2;
+            echo "Service packaging failed" 1>&2;
             exit 1;
           fi
         done;
