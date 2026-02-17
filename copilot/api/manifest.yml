@@ -1,46 +1,62 @@
 # The manifest for the "api" service.
-# Read the full specification for the "Load Balanced Web Service" type at:
-#  https://aws.github.io/copilot-cli/docs/manifest/lb-web-service/
+# Load Balanced Web Service
+# https://aws.github.io/copilot-cli/docs/manifest/lb-web-service/
 
-# Your service name will be used in naming your resources like log groups, ECS services, etc.
 name: api
 type: Load Balanced Web Service
 
-# Distribute traffic to your service.
 http:
-  # Requests to this path will be forwarded to your service.
-  # To match all requests you can use the "/" path.
   path: '/'
-  # ALB health check path (must return 200)
   healthcheck: '/v1/health'
 
-# Configuration for your containers and service.
 image:
-  # Docker build arguments. For additional overrides:
-  # https://aws.github.io/copilot-cli/docs/manifest/lb-web-service/#image-build
   build:
     context: .
     dockerfile: backend/api/Dockerfile
-  # Port exposed through your container to route traffic to it.
   port: 8000
 
-cpu: 256       # Number of CPU units for the task.
-memory: 512    # Amount of memory in MiB used by the task.
-count: 1       # Number of tasks that should be running in your service.
-exec: true     # Enable running commands in your container.
-network:
-  connect: true # Enable Service Connect for intra-environment traffic between services.
+cpu: 256
+memory: 512
+count: 1
+exec: true
 
-# Optional fields for more advanced use-cases.
+network:
+  connect: true
+
+# ---------------------------------------------------------
+# LLM Runtime Configuration (Bedrock – Dev Default)
+# ---------------------------------------------------------
+
+variables:
+  AWS_REGION: us-east-1
+  LLM_PROVIDER: bedrock
+  LLM_MODEL_IDENTIFIER: arn:aws:bedrock:us-east-1:456462539706:inference-profile/us.meta.llama3-1-8b-instruct-v1:0
+  LLM_TIMEOUT_SECONDS: "120"
+  LLM_TRACE_ENABLED: "0"
+
+# ---------------------------------------------------------
+# IAM Permissions for ECS Task Role
+# ---------------------------------------------------------
+
+permissions:
+  policies:
+    - policy_name: BedrockInvokeModel
+      policy_document:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+            Resource:
+              - arn:aws:bedrock:us-east-1:456462539706:inference-profile/us.meta.llama3-1-8b-instruct-v1:0
+
+# ---------------------------------------------------------
+# Optional environment-specific overrides
+# ---------------------------------------------------------
 #
-#variables:
-#  LOG_LEVEL: info
-#
-#secrets:
-#  GITHUB_TOKEN: GITHUB_TOKEN
-#
-#environments:
-#  dev:
-#    count: 2
-#    deployment:
-#      rolling: 'recreate'
+# environments:
+#   dev:
+#     count: 2
+#   prod:
+#     variables:
+#       LLM_TRACE_ENABLED: "0"

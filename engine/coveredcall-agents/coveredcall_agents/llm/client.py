@@ -1,10 +1,35 @@
+"""
+coveredcall_agents.llm.client
+
+Purpose:
+    Compatibility-layer LLM client module for Covered Call Agents.
+
+Design Goals:
+    - Stable interface used by the rest of the codebase (LLMClient Protocol).
+    - Extensible provider registry to avoid scattered provider conditionals.
+    - Centralized, validated env configuration (fail-fast; no hidden defaults).
+    - No hard-coded provider/model identifiers in code paths.
+
+Providers:
+    - Ollama (local)
+    - Bedrock (AWS) via separate module that self-registers
+
+Author:
+    Kanir Pandya
+
+Created:
+    2026-02-17
+"""
+
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import re
-import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Protocol, Type, TypeVar
+from enum import Enum
+from typing import Any, Callable, Dict, Protocol, Type, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -16,6 +41,38 @@ T = TypeVar("T", bound=BaseModel)
 logger = get_logger(__name__)
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
+
+# ----------------------------
+# Environment variable constants
+# ----------------------------
+ENV_LLM_PROVIDER = "LLM_PROVIDER"
+ENV_LLM_MODEL_IDENTIFIER = "LLM_MODEL_IDENTIFIER"
+
+ENV_LLM_TIMEOUT_SECONDS = "LLM_TIMEOUT_SECONDS"
+ENV_LLM_TRACE_ENABLED = "LLM_TRACE_ENABLED"
+ENV_LLM_TEMPERATURE = "LLM_TEMPERATURE"
+ENV_LLM_TOP_P = "LLM_TOP_P"
+ENV_LLM_MAX_TOKENS = "LLM_MAX_TOKENS"
+
+ENV_OLLAMA_BASE_URL = "OLLAMA_BASE_URL"
+
+ENV_AWS_REGION = "AWS_REGION"
+ENV_AWS_DEFAULT_REGION = "AWS_DEFAULT_REGION"
+
+# ----------------------------
+# Non-secret defaults (centralized)
+# ----------------------------
+DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_TOP_P = 0.9
+DEFAULT_MAX_TOKENS = 700
+
+TRACE_ENABLED_VALUE = "1"
+
+# ----------------------------
+# Standardized debug marker (provider-agnostic)
+# ----------------------------
+LLM_DEBUG_MARKER = "[LLMClient]"
 
 
 def _extract_first_json(text: str) -> tuple[str, bool]:
@@ -57,65 +114,171 @@ class LLMClient(Protocol):
     def generate_text(self, *, system: str, user: str) -> str: ...
 
 
+class LLMProvider(str, Enum):
+    OLLAMA = "ollama"
+    BEDROCK = "bedrock"
+    STUB = "stub"
+
+
+@dataclass(frozen=True)
+class LLMRuntimeConfig:
+    """
+    Runtime configuration for LLM selection and invocation.
+
+    Notes:
+        - provider must be explicitly configured via env.
+        - model_identifier must be explicitly configured for non-stub providers.
+    """
+
+    provider: LLMProvider
+    model_identifier: str
+
+    timeout_seconds: float
+    trace_enabled: bool
+
+    temperature: float
+    top_p: float
+    max_tokens: int
+
+    ollama_base_url: str | None = None
+    aws_region: str | None = None
+
+    @staticmethod
+    def from_env() -> "LLMRuntimeConfig":
+        provider_raw = (os.getenv(ENV_LLM_PROVIDER) or "").strip().lower()
+        if not provider_raw:
+            raise ValueError(f"{ENV_LLM_PROVIDER} must be set explicitly")
+
+        try:
+            provider = LLMProvider(provider_raw)
+        except ValueError as e:
+            raise ValueError(f"Unsupported {ENV_LLM_PROVIDER} value: {provider_raw}") from e
+
+        model_identifier = (os.getenv(ENV_LLM_MODEL_IDENTIFIER) or "").strip()
+
+        if provider != LLMProvider.STUB and not model_identifier:
+            raise ValueError(
+                f"{ENV_LLM_MODEL_IDENTIFIER} must be set explicitly for provider={provider.value}"
+            )
+
+        timeout_seconds = float(os.getenv(ENV_LLM_TIMEOUT_SECONDS, str(DEFAULT_TIMEOUT_SECONDS)))
+        trace_enabled = (os.getenv(ENV_LLM_TRACE_ENABLED) or "").strip() == TRACE_ENABLED_VALUE
+
+        temperature = float(os.getenv(ENV_LLM_TEMPERATURE, str(DEFAULT_TEMPERATURE)))
+        top_p = float(os.getenv(ENV_LLM_TOP_P, str(DEFAULT_TOP_P)))
+        max_tokens = int(os.getenv(ENV_LLM_MAX_TOKENS, str(DEFAULT_MAX_TOKENS)))
+
+        ollama_base_url = (os.getenv(ENV_OLLAMA_BASE_URL) or "").strip() or None
+        aws_region = (
+            (os.getenv(ENV_AWS_REGION) or "").strip()
+            or (os.getenv(ENV_AWS_DEFAULT_REGION) or "").strip()
+            or None
+        )
+
+        return LLMRuntimeConfig(
+            provider=provider,
+            model_identifier=model_identifier,
+            timeout_seconds=timeout_seconds,
+            trace_enabled=trace_enabled,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            ollama_base_url=ollama_base_url,
+            aws_region=aws_region,
+        )
+
+
+ProviderBuilder = Callable[[LLMRuntimeConfig], LLMClient]
+_PROVIDER_REGISTRY: Dict[LLMProvider, ProviderBuilder] = {}
+
+_PROVIDER_MODULES: Dict[LLMProvider, str] = {
+    # Providers that self-register on import:
+    LLMProvider.BEDROCK: "coveredcall_agents.llm.bedrock_client",
+}
+
+
+def register_llm_provider(provider: LLMProvider, builder: ProviderBuilder) -> None:
+    """
+    Register a provider builder. Providers should register themselves on import.
+    """
+    _PROVIDER_REGISTRY[provider] = builder
+
+
+def _ensure_provider_registered(provider: LLMProvider) -> None:
+    """
+    Ensure provider module has been imported so it can register itself.
+    """
+    if provider in _PROVIDER_REGISTRY:
+        return
+
+    module_path = _PROVIDER_MODULES.get(provider)
+    if not module_path:
+        return
+
+    importlib.import_module(module_path)
+
+
 @dataclass
 class OllamaClient:
     """
     Minimal Ollama client that asks for JSON output and validates with Pydantic.
-    Requires local Ollama server running (default: http://localhost:11434).
+    Requires local Ollama server running.
     """
 
     model_name: str
-    base_url: str = "http://localhost:11434"
-    timeout_s: float = 30.0
+    base_url: str
+    timeout_s: float
     trace: bool = False
 
     def _post_chat(self, payload_dict: dict) -> str:
-        with httpx.Client(timeout=self.timeout_s) as client:
-            r = client.post(f"{self.base_url}/api/chat", json=payload_dict)
-            r.raise_for_status()
-            data = r.json()
-        return ((data.get("message") or {}).get("content") or "").strip()
+        with httpx.Client(timeout=self.timeout_s) as http_client:
+            response = http_client.post(f"{self.base_url}/api/chat", json=payload_dict)
+            response.raise_for_status()
+            payload = response.json()
+        return ((payload.get("message") or {}).get("content") or "").strip()
 
     def _post_generate(self, payload_dict: dict) -> str:
-        with httpx.Client(timeout=self.timeout_s) as client:
-            r = client.post(f"{self.base_url}/api/generate", json=payload_dict)
-            r.raise_for_status()
-            data = r.json()
-        return (data.get("response") or "").strip()
+        with httpx.Client(timeout=self.timeout_s) as http_client:
+            response = http_client.post(f"{self.base_url}/api/generate", json=payload_dict)
+            response.raise_for_status()
+            payload = response.json()
+        return (payload.get("response") or "").strip()
 
     def generate_json(self, *, system: str, user: str, schema: Dict[str, Any], model: Type[T]) -> T:
-        system2 = (
+        system_instructions = (
             system
             + "\n\nIMPORTANT: Return ONLY a single valid JSON object. No markdown. No explanations."
         )
-        user2 = user + "\n\nReturn ONLY JSON."
+        user_instructions = user + "\n\nReturn ONLY JSON."
 
         payload = {
             "model": self.model_name,
             "stream": False,
             "format": "json",
             "messages": [
-                {"role": "system", "content": system2},
-                {"role": "user", "content": user2},
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": user_instructions},
             ],
             "options": {
                 "temperature": 0.0,
-                "num_predict": 700,
+                "num_predict": DEFAULT_MAX_TOKENS,
             },
         }
 
         if self.trace:
             logger.debug(
-                "OllamaClient(json) model=%s base_url=%s timeout_s=%s",
+                "%s provider=%s mode=json model=%s base_url=%s timeout_s=%s",
+                LLM_DEBUG_MARKER,
+                LLMProvider.OLLAMA.value,
                 self.model_name,
                 self.base_url,
                 self.timeout_s,
             )
 
-        def _regen_from_scratch_short() -> dict:
-            regen_payload = dict(payload)
-            regen_payload["messages"] = [
-                {"role": "system", "content": system2},
+        def _regenerate_from_scratch() -> dict:
+            regeneration_payload = dict(payload)
+            regeneration_payload["messages"] = [
+                {"role": "system", "content": system_instructions},
                 {
                     "role": "user",
                     "content": (
@@ -129,48 +292,48 @@ class OllamaClient:
                         "- Finish every string; no trailing clauses\n"
                     ),
                 },
-                {"role": "user", "content": user2},
+                {"role": "user", "content": user_instructions},
             ]
 
-            raw2 = self._post_chat(regen_payload)
-            if not raw2:
+            raw_regen = self._post_chat(regeneration_payload)
+            if not raw_regen:
                 raise RuntimeError("Ollama returned empty response on regenerate attempt")
 
-            text2, complete2 = _extract_first_json(raw2)
-            if not complete2:
-                raise RuntimeError(f"LLM JSON truncated twice. Raw (truncated): {raw2[:800]}")
+            extracted, is_complete = _extract_first_json(raw_regen)
+            if not is_complete:
+                raise RuntimeError(f"LLM JSON truncated twice. Raw (truncated): {raw_regen[:800]}")
 
-            obj2 = json.loads(text2)
-            if isinstance(obj2, list) and obj2:
-                obj2 = obj2[0]
-            if not isinstance(obj2, dict):
-                raise RuntimeError(f"Regenerate returned non-object JSON: {type(obj2)}")
+            parsed = json.loads(extracted)
+            if isinstance(parsed, list) and parsed:
+                parsed = parsed[0]
+            if not isinstance(parsed, dict):
+                raise RuntimeError(f"Regenerate returned non-object JSON: {type(parsed)}")
 
-            return obj2
+            return parsed
 
         raw = self._post_chat(payload)
         if not raw:
             raise RuntimeError("Ollama returned empty response")
 
-        text, complete = _extract_first_json(raw)
+        extracted, is_complete = _extract_first_json(raw)
 
-        if not complete:
-            obj = _regen_from_scratch_short()
+        if not is_complete:
+            parsed_obj: Any = _regenerate_from_scratch()
         else:
             try:
-                obj = json.loads(text)
+                parsed_obj = json.loads(extracted)
             except json.JSONDecodeError:
-                obj = _regen_from_scratch_short()
+                parsed_obj = _regenerate_from_scratch()
 
-        if isinstance(obj, list) and obj:
-            obj = obj[0]
+        if isinstance(parsed_obj, list) and parsed_obj:
+            parsed_obj = parsed_obj[0]
 
         try:
-            return model.model_validate(obj)
-        except ValidationError as e:
+            return model.model_validate(parsed_obj)
+        except ValidationError as validation_error:
             repair_payload = dict(payload)
             repair_payload["messages"] = [
-                {"role": "system", "content": system2},
+                {"role": "system", "content": system_instructions},
                 {
                     "role": "user",
                     "content": (
@@ -184,31 +347,31 @@ class OllamaClient:
                         "- Respect list limits exactly.\n"
                     ),
                 },
-                {"role": "user", "content": user2},
+                {"role": "user", "content": user_instructions},
             ]
 
-            raw3 = self._post_chat(repair_payload)
-            if not raw3:
+            raw_repair = self._post_chat(repair_payload)
+            if not raw_repair:
                 raise RuntimeError("Ollama returned empty response on schema-repair attempt")
 
-            text3, complete3 = _extract_first_json(raw3)
-            if not complete3:
-                msg = f"LLM JSON truncated on schema-repair attempt. Raw (truncated): {raw3[:800]}"
+            extracted_repair, is_complete_repair = _extract_first_json(raw_repair)
+            if not is_complete_repair:
+                msg = f"LLM JSON truncated on schema-repair attempt. Raw (truncated): {raw_repair[:800]}"
                 if self.trace:
                     logger.debug(msg)
                 raise RuntimeError(msg)
 
-            obj3 = json.loads(text3)
-            if isinstance(obj3, list) and obj3:
-                obj3 = obj3[0]
+            repaired_obj = json.loads(extracted_repair)
+            if isinstance(repaired_obj, list) and repaired_obj:
+                repaired_obj = repaired_obj[0]
 
             try:
-                return model.model_validate(obj3)
-            except ValidationError as e2:
+                return model.model_validate(repaired_obj)
+            except ValidationError as validation_error_retry:
                 raise RuntimeError(
-                    f"LLM JSON failed schema validation after retry: {e2}. "
-                    f"Raw (truncated): {json.dumps(obj3)[:800]}"
-                ) from e
+                    f"LLM JSON failed schema validation after retry: {validation_error_retry}. "
+                    f"Raw (truncated): {json.dumps(repaired_obj)[:800]}"
+                ) from validation_error
 
     def generate_text(self, *, system: str, user: str) -> str:
         payload = {
@@ -218,13 +381,15 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": 0.0,
-                "num_predict": 700,
+                "num_predict": DEFAULT_MAX_TOKENS,
             },
         }
 
         if self.trace:
             logger.debug(
-                "OllamaClient(text) model=%s base_url=%s timeout_s=%s",
+                "%s provider=%s mode=text model=%s base_url=%s timeout_s=%s",
+                LLM_DEBUG_MARKER,
+                LLMProvider.OLLAMA.value,
                 self.model_name,
                 self.base_url,
                 self.timeout_s,
@@ -237,7 +402,6 @@ class OllamaClient:
 class LocalStubLLM:
     """
     A safe fallback that never calls a model.
-    Useful if you want to flip 'mode=llm' before setting up Ollama.
     """
 
     def generate_json(self, *, system: str, user: str, schema: Dict[str, Any], model: Type[T]) -> T:
@@ -245,3 +409,41 @@ class LocalStubLLM:
 
     def generate_text(self, *, system: str, user: str) -> str:
         raise RuntimeError("LocalStubLLM: no LLM configured")
+
+
+def _build_ollama_client(cfg: LLMRuntimeConfig) -> OllamaClient:
+    if not cfg.ollama_base_url:
+        raise ValueError(f"{ENV_OLLAMA_BASE_URL} must be set for provider={LLMProvider.OLLAMA.value}")
+
+    return OllamaClient(
+        model_name=cfg.model_identifier,
+        base_url=cfg.ollama_base_url,
+        timeout_s=cfg.timeout_seconds,
+        trace=cfg.trace_enabled,
+    )
+
+
+register_llm_provider(LLMProvider.OLLAMA, _build_ollama_client)
+
+def build_llm_client_from_config(runtime_config: LLMRuntimeConfig) -> LLMClient:
+    """
+    Construct an LLM client using a provided runtime config and provider registry.
+    This is used by CLI flag-based config (dev flexibility) and tests.
+    """
+    if runtime_config.provider == LLMProvider.STUB:
+        return LocalStubLLM()
+
+    _ensure_provider_registered(runtime_config.provider)
+
+    builder = _PROVIDER_REGISTRY.get(runtime_config.provider)
+    if not builder:
+        raise ValueError(f"No provider registered for provider={runtime_config.provider.value}")
+
+    return builder(runtime_config)
+
+
+def build_llm_client_from_env() -> LLMClient:
+    return build_llm_client_from_config(LLMRuntimeConfig.from_env())
+
+# Backward-compatible alias
+get_llm_client_from_env = build_llm_client_from_env

@@ -11,17 +11,27 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
-from coveredcall_agents.api.run_analysis import run_analysis
 
+from coveredcall_agents.api.run_analysis import run_analysis
 from coveredcall_agents.config.default_config import DEFAULT_CONFIG
 from coveredcall_agents.fundamentals.mode import FundamentalsMode
 from coveredcall_agents.graph.covered_call_graph import CoveredCallAgentsGraph
+from coveredcall_agents.llm.client import (
+    ENV_LLM_MODEL_IDENTIFIER,
+    ENV_LLM_PROVIDER,
+    ENV_LLM_TIMEOUT_SECONDS,
+    ENV_LLM_TRACE_ENABLED,
+    ENV_OLLAMA_BASE_URL,
+)
 
 from cli.logging_setup import setup_cli_logging
 
 
 logger = logging.getLogger("coveredcall_agents.cli")
+
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 
 def oprint(*args, **kwargs) -> None:
@@ -132,6 +142,42 @@ def _print_pretty_fundamentals(report) -> None:
         oprint("")
 
 
+def _apply_llm_cli_overrides_to_env(args: argparse.Namespace) -> None:
+    """
+    Apply CLI LLM overrides by setting environment variables.
+
+    CoveredCallAgentsGraph builds the LLM client from env.
+    This bridge keeps CLI dev flexibility without duplicating provider logic.
+
+    Design:
+        - CLI provides a dev default for Ollama base URL to match existing tests.
+        - Library remains strict (no hidden defaults) via LLMRuntimeConfig.from_env().
+    """
+    if args.llm_provider:
+        provider_raw = (args.llm_provider or "").strip().lower()
+
+        # Map legacy CLI "none" to runtime "stub".
+        if provider_raw == "none":
+            os.environ[ENV_LLM_PROVIDER] = "stub"
+        else:
+            os.environ[ENV_LLM_PROVIDER] = provider_raw
+
+        if args.llm_model:
+            os.environ[ENV_LLM_MODEL_IDENTIFIER] = str(args.llm_model).strip()
+
+        # Always set base URL for ollama (CLI default covers this).
+        if provider_raw == "ollama":
+            base_url = str(args.llm_base_url or DEFAULT_OLLAMA_BASE_URL).strip()
+            os.environ[ENV_OLLAMA_BASE_URL] = base_url
+
+        if args.llm_timeout_s is not None:
+            os.environ[ENV_LLM_TIMEOUT_SECONDS] = str(float(args.llm_timeout_s))
+
+    # Keep trace behavior consistent across providers.
+    if args.trace or args.force_debate:
+        os.environ[ENV_LLM_TRACE_ENABLED] = "1"
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--ticker", required=True)
@@ -154,14 +200,21 @@ def main() -> None:
         ],
     )
 
-    p.add_argument("--llm-provider", choices=["ollama", "mock", "none"], default=None)
+    # Include bedrock in CLI for dev flexibility (still uses env-driven provider registry).
+    p.add_argument("--llm-provider", choices=["ollama", "bedrock", "mock", "none"], default=None)
     p.add_argument("--llm-model", default=None)
-    p.add_argument("--llm-base-url", default=None)
+
+    # Dev-friendly default for ollama to keep tests/usage simple.
+    p.add_argument("--llm-base-url", default=DEFAULT_OLLAMA_BASE_URL)
+
     p.add_argument("--llm-timeout-s", type=float, default=None)
 
     args = p.parse_args()
 
     setup_cli_logging(trace=args.trace)
+
+    # Bridge CLI flags → env for LLM provider selection.
+    _apply_llm_cli_overrides_to_env(args)
 
     cfg = _deep_copy(DEFAULT_CONFIG)
 
@@ -175,7 +228,7 @@ def main() -> None:
     if args.force_debate:
         cfg.setdefault("fundamentals", {})["force_debate"] = True
 
-    # LLM settings live under config["llm"]
+    # Keep these for backwards compatibility / visibility, but provider selection is env-driven.
     if args.llm_provider:
         cfg.setdefault("llm", {})["provider"] = args.llm_provider
     if args.llm_model:

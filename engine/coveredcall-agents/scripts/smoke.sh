@@ -12,7 +12,7 @@ TIMEOUT=${TIMEOUT:-180}
 
 echo "[smoke] ticker=$TICKER smoke_llm=$SMOKE_LLM"
 
-BAD_RE='(\[DEBUG|\[OllamaClient\]|Fundamentals provider:|Fundamentals mode:)'
+BAD_RE='(\[DEBUG|\[LLMClient\]|Fundamentals provider:|Fundamentals mode:)'
 
 echo "[smoke] 1) json parse (deterministic)"
 $CLI --ticker "$TICKER" \
@@ -31,7 +31,7 @@ $PYTHON - <<'PY'
 import re, sys, pathlib
 s = pathlib.Path("/tmp/cca_smoke.out").read_text(errors="replace")
 bad = []
-for pat in [r"\[DEBUG", r"\[OllamaClient\]", r"Fundamentals provider:", r"Fundamentals mode:"]:
+for pat in [r"\[DEBUG", r"\[LLMClient\]", r"Fundamentals provider:", r"Fundamentals mode:"]:
     if re.search(pat, s):
         bad.append(pat)
 if bad:
@@ -50,7 +50,7 @@ $CLI --ticker "$TICKER" \
 
 test -s /tmp/cca_trace.out || (echo "FAIL: trace stdout empty"; tail -n 120 /tmp/cca_trace.err; exit 5)
 $PYTHON -c "import json; json.load(open('/tmp/cca_trace.out')); print('OK: json parse (trace)')"
-grep -Eq "\[DEBUG|\[OllamaClient\]" /tmp/cca_trace.err && echo "OK: trace emits debug to stderr" || (echo "FAIL: trace produced no debug stderr" && exit 3)
+grep -Eq "\[DEBUG|\[LLMClient\]" /tmp/cca_trace.err && echo "OK: trace emits debug to stderr" || (echo "FAIL: trace produced no debug stderr" && exit 3)
 
 echo "[smoke] 3) BrokenPipe safety"
 set +e

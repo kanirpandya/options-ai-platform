@@ -24,7 +24,7 @@ TIMEOUT = os.environ.get("TIMEOUT", "180")
 
 SMOKE_LLM = os.environ.get("SMOKE_LLM", "0") == "1"
 
-BAD_MARKERS = ["[DEBUG", "[OllamaClient]", "Fundamentals provider:", "Fundamentals mode:"]
+BAD_MARKERS = ["[DEBUG", "[LLMClient]", "Fundamentals provider:", "Fundamentals mode:"]
 
 
 def run(args):
@@ -56,7 +56,7 @@ def test_trace_emits_debug_to_stderr_only_deterministic():
         ["--ticker", TICKER, "--fundamentals-mode", "deterministic", "--trace", "--output", "json"]
     )
     assert_stdout_clean_json(r)
-    assert any(m in r.stderr for m in ("[DEBUG", "[OllamaClient]")), (
+    assert any(m in r.stderr for m in ("[DEBUG", "[LLMClient]")), (
         "trace did not emit debug to stderr"
     )
 

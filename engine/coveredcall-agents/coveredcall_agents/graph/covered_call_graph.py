@@ -23,7 +23,7 @@ from ..agents.mode_accessors import fundamentals_resolver_node
 from ..agents.llm_node import llm_node
 from ..fundamentals.mode import FundamentalsMode
 from ..fundamentals.mode_helpers import get_fundamentals_mode
-from ..llm.client import OllamaClient
+from ..llm.client import build_llm_client_from_env
 from ..llm.mock_client import MockLLMClient
 from ..tools.fundamentals import get_fundamental_snapshot
 from ..tools.fundamentals_yfinance import get_fundamental_snapshot_yfinance
@@ -164,6 +164,7 @@ class CoveredCallAgentsGraph:
         mode = get_fundamentals_mode(config)
 
         llm_client: Any = None
+        
         if mode in (FundamentalsMode.LLM, FundamentalsMode.AGENTIC):
             llm_cfg = config.get("llm", {}) or {}
 
@@ -171,12 +172,7 @@ class CoveredCallAgentsGraph:
                 llm_client = MockLLMClient()
 
             elif llm_cfg.get("provider") == "ollama":
-                llm_client = OllamaClient(
-                    model_name=str(llm_cfg.get("model", "llama3.1:8b")),
-                    base_url=str(llm_cfg.get("base_url", "http://localhost:11434")),
-                    timeout_s=float(llm_cfg.get("timeout_s", 30.0)),
-                    trace=bool(config.get("trace", False)),
-                )
+               llm_client = build_llm_client_from_env()
 
             elif llm_cfg.get("provider") in (None, "none"):
                 llm_client = None
