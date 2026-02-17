@@ -4,7 +4,7 @@
 # Author: Kanir Pandya
 # Created: 2026-02-15
 
-FROM python:3.11-slim
+FROM public.ecr.aws/docker/library/python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -23,8 +23,8 @@ COPY . /app
 # Prefer requirements.txt if present; otherwise install editable if using pyproject.
 # If you have a different dependency strategy, adjust this block.
 # Install engine package (coveredcall-agents) and its dependencies.
-RUN pip install --no-cache-dir -r backend/api/requirements.txt \
- && pip install --no-cache-dir -e engine/coveredcall-agents
+RUN pip install --no-cache-dir -r /app/backend/api/requirements.txt \
+ && pip install --no-cache-dir -e /app/engine/coveredcall-agents
 
 
 EXPOSE 8000

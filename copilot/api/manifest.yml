@@ -30,6 +30,7 @@ network:
 variables:
   AWS_REGION: us-east-1
   LLM_PROVIDER: bedrock
+  # Use the inference profile ARN (NOT the foundation model id) to avoid on-demand validation errors.
   LLM_MODEL_IDENTIFIER: arn:aws:bedrock:us-east-1:456462539706:inference-profile/us.meta.llama3-1-8b-instruct-v1:0
   LLM_TIMEOUT_SECONDS: "120"
   LLM_TRACE_ENABLED: "0"
@@ -47,16 +48,15 @@ permissions:
           - Effect: Allow
             Action:
               - bedrock:InvokeModel
-            Resource:
-              - arn:aws:bedrock:us-east-1:456462539706:inference-profile/us.meta.llama3-1-8b-instruct-v1:0
+            Resource: "*"
 
 # ---------------------------------------------------------
 # Optional environment-specific overrides
 # ---------------------------------------------------------
-#
 # environments:
 #   dev:
-#     count: 2
+#     variables:
+#       LLM_TRACE_ENABLED: "1"
 #   prod:
 #     variables:
 #       LLM_TRACE_ENABLED: "0"
