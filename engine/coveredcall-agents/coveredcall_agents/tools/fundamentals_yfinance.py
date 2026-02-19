@@ -1,3 +1,22 @@
+"""
+coveredcall_agents.tools.fundamentals_yfinance
+
+Purpose:
+    Fetch a fundamentals snapshot using yfinance (Yahoo Finance) and return a
+    FundamentalSnapshot with quality/missing_fields/warnings.
+
+Notes:
+    - Sets snapshot.as_of to the request timestamp (same as quality.as_of).
+    - Sets snapshot.source to "yfinance".
+    - Sets snapshot.metadata with basic provider context.
+
+Author:
+    Kanir Pandya
+
+Created:
+    2026-02-18
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -25,7 +44,8 @@ def get_fundamental_snapshot_yfinance(
     """
     Tool: fetch a fundamentals snapshot using yfinance (Yahoo Finance).
 
-    Returns FundamentalSnapshot with missing_fields/warnings populated when data is absent.
+    Returns:
+        FundamentalSnapshot with missing_fields/warnings populated when data is absent.
     """
     as_of = as_of or datetime.now(timezone.utc)
     t = ticker.upper().strip()
@@ -39,6 +59,9 @@ def get_fundamental_snapshot_yfinance(
     except Exception as e:
         return FundamentalSnapshot(
             ticker=t,
+            as_of=as_of,
+            source="yfinance",
+            metadata={"provider": "yfinance", "ticker": t},
             quality=DataQuality(
                 as_of=as_of,
                 is_stub=False,
@@ -89,6 +112,13 @@ def get_fundamental_snapshot_yfinance(
 
     return FundamentalSnapshot(
         ticker=t,
+        as_of=as_of,
+        source="yfinance",
+        metadata={
+            "provider": "yfinance",
+            "ticker": t,
+            # Keep metadata small/stable; avoid dumping full info dict.
+        },
         price=price,
         market_cap=market_cap,
         revenue_growth_yoy_pct=revenue_growth_yoy_pct,

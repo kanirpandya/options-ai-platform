@@ -1,3 +1,21 @@
+"""
+coveredcall_agents.tools.fundamentals
+
+Purpose:
+    Provide a deterministic stub fundamentals snapshot for Phase 1 / offline runs.
+
+Notes:
+    - Sets snapshot.as_of to the request timestamp (same as quality.as_of).
+    - Sets snapshot.source to "stub".
+    - Sets snapshot.metadata with basic provider context.
+
+Author:
+    Kanir Pandya
+
+Created:
+    2026-02-18
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -18,10 +36,15 @@ def get_fundamental_snapshot(
     as_of = as_of or datetime.now(timezone.utc)
     t = ticker.upper().strip()
 
+    base_meta = {"provider": "stub", "ticker": t}
+
     # ---- STUB DATA (safe + deterministic) ----
     if t == "AAPL":
         return FundamentalSnapshot(
             ticker="AAPL",
+            as_of=as_of,
+            source="stub",
+            metadata=base_meta,
             price=190.0,
             market_cap=2.9e12,
             revenue_growth_yoy_pct=2.0,
@@ -38,6 +61,9 @@ def get_fundamental_snapshot(
     if t == "MSFT":
         return FundamentalSnapshot(
             ticker="MSFT",
+            as_of=as_of,
+            source="stub",
+            metadata=base_meta,
             price=420.0,
             market_cap=3.1e12,
             revenue_growth_yoy_pct=12.0,
@@ -54,6 +80,9 @@ def get_fundamental_snapshot(
     if t == "TSLA":
         return FundamentalSnapshot(
             ticker="TSLA",
+            as_of=as_of,
+            source="stub",
+            metadata=base_meta,
             price=250.0,
             market_cap=8.0e11,
             revenue_growth_yoy_pct=5.0,
@@ -71,6 +100,9 @@ def get_fundamental_snapshot(
     # ---- FALLBACK (unknown ticker) ----
     return FundamentalSnapshot(
         ticker=t,
+        as_of=as_of,
+        source="stub",
+        metadata=base_meta,
         quality=DataQuality(
             as_of=as_of,
             is_stub=True,

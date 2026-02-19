@@ -6,6 +6,9 @@ Purpose:
 - Routes execution based on fundamentals mode (deterministic / llm / agentic).
 - Always runs divergence + debate for llm/agentic (Policy B), then resolves final fundamentals,
   then generates the final proposal/report.
+
+Updated:
+    2026-02-17
 """
 
 from datetime import datetime
@@ -164,24 +167,30 @@ class CoveredCallAgentsGraph:
         mode = get_fundamentals_mode(config)
 
         llm_client: Any = None
-        
+
         if mode in (FundamentalsMode.LLM, FundamentalsMode.AGENTIC):
             llm_cfg = config.get("llm", {}) or {}
+            provider_raw = (llm_cfg.get("provider") or "").strip().lower()
 
-            if llm_cfg.get("provider") == "mock":
+            if provider_raw == "mock":
                 llm_client = MockLLMClient()
-
-            elif llm_cfg.get("provider") == "ollama":
-               llm_client = build_llm_client_from_env()
-
-            elif llm_cfg.get("provider") in (None, "none"):
+            elif provider_raw in ("", "env", "ollama", "bedrock"):
+                # Use env-driven provider selection (LLM_PROVIDER, LLM_MODEL_IDENTIFIER, etc.)
+                llm_client = build_llm_client_from_env()
+            elif provider_raw in ("none", "null"):
                 llm_client = None
             else:
-                raise ValueError(f"Unsupported LLM provider: {llm_cfg.get('provider')}")
+                # If we ever add more providers, they should be handled by llm.client registry.
+                # For now, treat unknown config provider as env-driven to avoid false negatives.
+                llm_client = build_llm_client_from_env()
 
-            # IMPORTANT: fail early and clearly (prevents the old crash path)
+            # IMPORTANT: fail early and clearly
             if llm_client is None:
-                raise ValueError("LLM mode requires an LLM provider (e.g., --llm-provider ollama|mock).")
+                raise ValueError(
+                    "LLM mode requires an LLM provider. "
+                    "Set LLM_PROVIDER (and LLM_MODEL_IDENTIFIER, etc.) in the service environment "
+                    "or use llm.provider=mock."
+                )
 
         init = GraphState(
             ticker=ticker,

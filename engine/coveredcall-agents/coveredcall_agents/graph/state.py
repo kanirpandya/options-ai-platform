@@ -12,6 +12,17 @@ Role in system:
 Notes:
     Any change here is a breaking change for multiple nodes and must
     be accompanied by regression tests.
+
+Update (Option A):
+    - Added FundamentalSnapshot.as_of, .source, .metadata so the API can return
+      non-null values (instead of only quality.as_of).
+
+Fixes included:
+    1) Remove duplicate/conflicting Stance/CoveredCallBias enums defined twice
+       (we use the canonical enums from coveredcall_agents.contracts.enums).
+    2) DivergenceSeverity now includes "EXTREME" to match debate gating + docs.
+    3) FundamentalSnapshot auto-populates top-level as_of/source/metadata when missing
+       (from quality.as_of and best-effort metadata defaults) to keep API responses non-null.
 """
 
 from __future__ import annotations
@@ -24,10 +35,9 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field, confloat, conlist, model_validator
 
 from coveredcall_agents.agentic.agentic_contracts import AgenticResponse
-from coveredcall_agents.fundamentals.mode import FundamentalsMode
+from coveredcall_agents.contracts.enums import CoveredCallBias, Stance, TradeAction
+from coveredcall_agents.fundamentals.mode import FundamentalsMode  # may be used by callers
 from ..tools.registry import Tools
-
-from coveredcall_agents.contracts.enums import Stance, CoveredCallBias, TradeAction
 
 # ---------------------------
 # Small constrained list types
@@ -36,21 +46,6 @@ ShortBullets = conlist(str, min_length=0, max_length=2)
 ShortRisks = conlist(str, min_length=0, max_length=1)
 ShortSummary = conlist(str, min_length=0, max_length=2)
 ShortPoints = conlist(str, min_length=0, max_length=4)
-
-
-# ---------------------------
-# Enums
-# ---------------------------
-class Stance(str, Enum):
-    BULLISH = "BULLISH"
-    NEUTRAL = "NEUTRAL"
-    BEARISH = "BEARISH"
-
-
-class CoveredCallBias(str, Enum):
-    UPSIDE = "UPSIDE"
-    INCOME = "INCOME"
-    CAUTION = "CAUTION"
 
 
 # ---------------------------
@@ -82,6 +77,12 @@ class DataQuality(BaseModel):
 
 class FundamentalSnapshot(BaseModel):
     ticker: str
+
+    # API-visible top-level snapshot metadata (optional for backward compatibility).
+    as_of: Optional[datetime] = None
+    source: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
     price: Optional[float] = None
     market_cap: Optional[float] = None
     revenue_growth_yoy_pct: Optional[float] = None
@@ -90,6 +91,29 @@ class FundamentalSnapshot(BaseModel):
     operating_margin_pct: Optional[float] = None
     debt_to_equity: Optional[float] = None
     quality: DataQuality
+
+    @model_validator(mode="after")
+    def _fill_api_visible_metadata(self) -> "FundamentalSnapshot":
+        """
+        Keep API responses non-null and consistent:
+          - If top-level as_of is missing, default to quality.as_of.
+          - If metadata is missing, provide a minimal dict.
+          - If source is missing but metadata has provider, use it.
+        """
+        if self.as_of is None:
+            self.as_of = self.quality.as_of
+
+        if self.metadata is None:
+            # best-effort: keep stable keys; callers/providers can override
+            self.metadata = {"ticker": self.ticker}
+
+        # source: prefer explicit, else provider-ish metadata, else None
+        if self.source is None and isinstance(self.metadata, dict):
+            provider = self.metadata.get("provider")
+            if isinstance(provider, str) and provider.strip():
+                self.source = provider.strip()
+
+        return self
 
 
 # ---------------------------
@@ -187,7 +211,7 @@ class FundamentalsView(BaseModel):
 # ---------------------------
 # Divergence report
 # ---------------------------
-DivergenceSeverity = Literal["ALIGNED", "MINOR", "MAJOR", "CRITICAL"]
+DivergenceSeverity = Literal["ALIGNED", "MINOR", "MAJOR", "CRITICAL", "EXTREME"]
 
 
 class DivergenceReport(BaseModel):
@@ -221,6 +245,7 @@ class FundamentalsExplainPayload(BaseModel):
     mode: Optional[str] = None
     trace_nodes: Annotated[list[str], operator.add] = Field(default_factory=list)
 
+
 # ---------------------------
 # Proposal + LLM payload
 # ---------------------------
@@ -231,7 +256,8 @@ class FundamentalProposal(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     key_points: ShortPoints = Field(default_factory=list)
     risks: ShortRisks = Field(default_factory=list)
-    
+
+
 class FundamentalReport(BaseModel):
     ticker: str
     stance: Stance
@@ -244,6 +270,7 @@ class FundamentalReport(BaseModel):
     explain: Optional[FundamentalsExplainPayload] = None
     action: TradeAction | None = None
     action_reason: str | None = None
+
 
 # ---------------------------
 # Graph state

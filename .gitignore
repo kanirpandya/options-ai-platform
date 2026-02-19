@@ -24,3 +24,4 @@ htmlcov/
 out*.json
 trace*.log
 *.log
+session-manager-plugin.pkg
