@@ -18,7 +18,7 @@ def test_health_root_ok(client) -> None:
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"ok": True}
-    assert r.headers.get("x-request-id")  # request id should always be present
+    assert r.headers.get("x-request-id")
 
 
 def test_health_v1_ok(client) -> None:
