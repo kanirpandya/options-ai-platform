@@ -33,22 +33,14 @@ variables:
   # Use the inference profile ARN (NOT the foundation model id) to avoid on-demand validation errors.
   LLM_MODEL_IDENTIFIER: arn:aws:bedrock:us-east-1:456462539706:inference-profile/us.meta.llama3-1-8b-instruct-v1:0
   LLM_TIMEOUT_SECONDS: "120"
-  LLM_TRACE_ENABLED: "0"
+  LLM_TRACE_ENABLED: "1"
 
 # ---------------------------------------------------------
 # IAM Permissions for ECS Task Role
 # ---------------------------------------------------------
+# NOTE:
+# Re-deploy the service after editing this file so Copilot updates the TaskRole.
 
-permissions:
-  policies:
-    - policy_name: BedrockInvokeModel
-      policy_document:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Action:
-              - bedrock:InvokeModel
-            Resource: "*"
 
 # ---------------------------------------------------------
 # Optional environment-specific overrides
