@@ -15,7 +15,7 @@ Author:
     Kanir Pandya
 
 Updated:
-    2026-02-15
+    2026-02-19
 """
 
 from __future__ import annotations
@@ -40,11 +40,15 @@ class FundamentalsMode(str, Enum):
     """
     Supported fundamentals modes (API-level).
     Keep in sync with engine modes you actually support.
+
+    Note:
+        The engine expects "det" for deterministic runs.
+        We accept "deterministic" here for readability and map it in the route layer.
     """
     deterministic = "deterministic"
+    det = "det"  # allow legacy shorthand
     llm = "llm"
     agentic = "agentic"
-    det = "det"  # allow legacy shorthand if your engine accepts it
 
 
 class AnalyzeRequest(BaseModel):
@@ -52,7 +56,7 @@ class AnalyzeRequest(BaseModel):
     Request payload for /v1/analyze.
 
     Only `ticker` is required. Optional fields are overrides applied onto
-    the base engine config by _apply_overrides().
+    the base engine config by the route layer.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -63,7 +67,6 @@ class AnalyzeRequest(BaseModel):
         examples=["AAPL", "BRK.B", "RDS-A"],
     )
 
-    # ---- Optional overrides (used by backend/api/routes/analysis.py:_apply_overrides) ----
     provider: Optional[FundamentalsProvider] = Field(
         default=None,
         description="Fundamentals provider override.",
@@ -73,7 +76,7 @@ class AnalyzeRequest(BaseModel):
     mode: Optional[FundamentalsMode] = Field(
         default=None,
         description="Fundamentals execution mode override.",
-        examples=["deterministic"],
+        examples=["deterministic", "det", "llm", "agentic"],
     )
 
     force_debate: Optional[bool] = Field(

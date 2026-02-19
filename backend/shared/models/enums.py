@@ -41,10 +41,13 @@ class FundamentalsMode(str, Enum):
         mode cleanly via config overrides without translation layers.
     """
 
-    DETERMINISTIC = "deterministic"
+    DET = "det"
     LLM = "llm"
     AGENTIC = "agentic"
     LLM_AGENTIC = "llm_agentic"
+
+    # Backward-compatible alias (optional):
+    DETERMINISTIC = "det"
 
 
 class JobStatus(str, Enum):

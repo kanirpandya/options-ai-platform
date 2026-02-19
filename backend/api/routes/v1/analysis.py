@@ -20,7 +20,7 @@ Author:
     Kanir Pandya
 
 Updated:
-    2026-02-15
+    2026-02-19
 """
 
 from __future__ import annotations
@@ -35,8 +35,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from backend.api.schemas.analysis import AnalyzeRequest
 from backend.api.contracts.error_contract import ErrorResponse
+from backend.api.schemas.analysis import AnalyzeRequest
+from backend.shared.models.normalization.engine_config_mapping import (
+    apply_engine_overrides_from_request,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,43 +47,8 @@ router = APIRouter(tags=["analysis"])
 
 
 # ---------------------------------------------------------------------------
-# Config Handling
+# Env Parsing Helpers
 # ---------------------------------------------------------------------------
-
-def _apply_overrides(config: Dict[str, Any], req: AnalyzeRequest) -> None:
-    # Fundamentals provider (API -> engine)
-    if req.provider:
-        raw = (req.provider.value or "").strip().lower()
-
-        # API contract names -> engine fundamentals provider names
-        provider_map = {
-            "yahoo": "yfinance",
-            "yahoo_stub": "stub",
-            # allow passing engine-native values too
-            "yfinance": "yfinance",
-            "stub": "stub",
-        }
-        engine_fund_provider = provider_map.get(raw, raw)
-
-        # Engine expects this shape (see CLI: cfg.setdefault("providers", {})["fundamentals"] = ...)
-        config.setdefault("providers", {})["fundamentals"] = engine_fund_provider
-
-        # Optional: remove/ignore legacy flat key to avoid confusion
-        # (harmless either way, but this keeps config clean)
-        config.pop("provider", None)
-
-    # Mode (unchanged)
-    if req.mode:
-        config["mode"] = req.mode.value  # Enum -> string
-
-    # Force debate (unchanged)
-    if req.force_debate is not None:
-        config["force_debate"] = req.force_debate
-
-    # Output (unchanged)
-    if req.output:
-        config["output"] = req.output
-
 
 def _as_bool(value: str | None) -> bool | None:
     if value is None:
@@ -91,6 +59,7 @@ def _as_bool(value: str | None) -> bool | None:
     if v in ("0", "false", "no", "n", "off"):
         return False
     return None
+
 
 def _as_int(raw: str | None, *, default: int | None = None) -> int | None:
     """
@@ -108,6 +77,20 @@ def _as_int(raw: str | None, *, default: int | None = None) -> int | None:
     if not s:
         return default
     return int(s)
+
+
+def _set_if_empty(d: Dict[str, Any], key: str, value: Any) -> None:
+    """
+    Set d[key] if value is not None and the existing value is missing/empty.
+
+    This avoids setdefault() pitfalls when defaults exist but are None.
+    """
+    if value is None:
+        return
+    cur = d.get(key, None)
+    if cur is None or cur == "" or cur == {}:
+        d[key] = value
+
 
 def _apply_llm_env_defaults(config: Dict[str, Any]) -> None:
     """
@@ -136,45 +119,57 @@ def _apply_llm_env_defaults(config: Dict[str, Any]) -> None:
     )
 
     # ---- Flat keys (common in CLI configs) ----
-    if provider:
-        config.setdefault("llm_provider", provider)
-    if model_identifier:
-        config.setdefault("llm_model_identifier", model_identifier)
-    if timeout_seconds is not None:
-        config.setdefault("llm_timeout_seconds", timeout_seconds)
-    if trace_enabled is not None:
-        config.setdefault("llm_trace_enabled", trace_enabled)
+    _set_if_empty(config, "llm_provider", provider)
+    _set_if_empty(config, "llm_model_identifier", model_identifier)
+    _set_if_empty(config, "llm_timeout_seconds", timeout_seconds)
+    _set_if_empty(config, "llm_trace_enabled", trace_enabled)
 
     # ---- Nested keys (common in structured engine configs) ----
-    llm_block = config.setdefault("llm", {})
-    if isinstance(llm_block, dict):
-        if provider:
-            llm_block.setdefault("provider", provider)
-        if model_identifier:
-            llm_block.setdefault("model_identifier", model_identifier)
-            llm_block.setdefault("model", model_identifier)  # some configs use "model"
-        if timeout_seconds is not None:
-            llm_block.setdefault("timeout_seconds", timeout_seconds)
-            llm_block.setdefault("timeout", timeout_seconds)  # some configs use "timeout"
-        if trace_enabled is not None:
-            llm_block.setdefault("trace_enabled", trace_enabled)
-            llm_block.setdefault("trace", trace_enabled)
+    llm_block = config.get("llm")
+    if llm_block is None or not isinstance(llm_block, dict):
+        llm_block = {}
+        config["llm"] = llm_block
 
-        # One more common nesting: llm.client.*
-        client_block = llm_block.setdefault("client", {})
-        if isinstance(client_block, dict):
-            if provider:
-                client_block.setdefault("provider", provider)
-            if model_identifier:
-                client_block.setdefault("model_identifier", model_identifier)
-                client_block.setdefault("model", model_identifier)
-            if timeout_seconds is not None:
-                client_block.setdefault("timeout_seconds", timeout_seconds)
-                client_block.setdefault("timeout", timeout_seconds)
+    _set_if_empty(llm_block, "provider", provider)
+    _set_if_empty(llm_block, "model_identifier", model_identifier)
+    _set_if_empty(llm_block, "model", model_identifier)  # some configs use "model"
+    _set_if_empty(llm_block, "timeout_seconds", timeout_seconds)
+    _set_if_empty(llm_block, "timeout", timeout_seconds)  # some configs use "timeout"
+    _set_if_empty(llm_block, "trace_enabled", trace_enabled)
+    _set_if_empty(llm_block, "trace", trace_enabled)
 
+    # One more common nesting: llm.client.*
+    client_block = llm_block.get("client")
+    if client_block is None or not isinstance(client_block, dict):
+        client_block = {}
+        llm_block["client"] = client_block
+
+    _set_if_empty(client_block, "provider", provider)
+    _set_if_empty(client_block, "model_identifier", model_identifier)
+    _set_if_empty(client_block, "model", model_identifier)
+    _set_if_empty(client_block, "timeout_seconds", timeout_seconds)
+    _set_if_empty(client_block, "timeout", timeout_seconds)
+
+
+# ---------------------------------------------------------------------------
+# Base Config
+# ---------------------------------------------------------------------------
 
 def _base_config() -> Dict[str, Any]:
-    return {}
+    """
+    Return a deep-copied engine default config so API behavior matches CLI behavior
+    and request overrides do not mutate module-level defaults.
+    """
+    try:
+        from coveredcall_agents.config.default_config import DEFAULT_CONFIG  # type: ignore
+    except Exception as e:
+        logger.exception(
+            "Failed to import engine DEFAULT_CONFIG; falling back to empty config: %s", e
+        )
+        return {}
+
+    # Deep copy (JSON roundtrip) to avoid mutating DEFAULT_CONFIG
+    return json.loads(json.dumps(DEFAULT_CONFIG))
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +320,14 @@ def analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
         ) from e
 
     config: Dict[str, Any] = _base_config()
-    _apply_overrides(config, req)
+
+    apply_engine_overrides_from_request(
+        config,
+        provider=(req.provider.value if req.provider else None),
+        mode=(req.mode.value if req.mode else None),
+        force_debate=req.force_debate,
+        output=req.output,
+    )
 
     # Default LLM runtime settings from env for API calls (Copilot variables).
     mode = config.get("mode")  # "det" | "llm" | "agentic"
@@ -334,8 +336,24 @@ def analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
 
     logger.info("analysis config (pre-engine): %s", config)
 
+    # Helpful in AWS logs when debugging env/config drift
+    logger.info(
+        "LLM cfg check: llm_provider=%r llm.provider=%r llm.client.provider=%r model=%r",
+        config.get("llm_provider"),
+        (config.get("llm") or {}).get("provider") if isinstance(config.get("llm"), dict) else None,
+        ((config.get("llm") or {}).get("client") or {}).get("provider")
+        if isinstance(config.get("llm"), dict) and isinstance((config.get("llm") or {}).get("client"), dict)
+        else None,
+        config.get("llm_model_identifier")
+        or ((config.get("llm") or {}).get("model_identifier") if isinstance(config.get("llm"), dict) else None),
+    )
+
     try:
-        logger.info("engine: starting run_analysis mode=%s provider=%s", config.get("mode"), config.get("providers"))
+        logger.info(
+            "engine: starting run_analysis mode=%s providers=%s",
+            config.get("mode"),
+            config.get("providers"),
+        )
         result = run_analysis(ticker=req.ticker, config=config)
         logger.info(
             "engine: finished run_analysis trace_nodes=%s report_key_points=%s appendix_len=%s",
@@ -372,10 +390,14 @@ def analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
 
     # Stable public API shape
     if isinstance(safe_payload, dict):
+        # Avoid returning null config if engine model doesn't echo it for some modes.
+        echoed_cfg = safe_payload.get("config")
+        stable_cfg = echoed_cfg if isinstance(echoed_cfg, dict) else (config or {})
+
         return {
             "ticker": safe_payload.get("ticker"),
             "as_of": safe_payload.get("as_of"),
-            "config": safe_payload.get("config", {}),
+            "config": stable_cfg,
             "fundamentals_snapshot": safe_payload.get("fundamentals_snapshot"),
             "fundamentals_report": safe_payload.get("fundamentals_report"),
             "trace_nodes": safe_payload.get("trace_nodes"),

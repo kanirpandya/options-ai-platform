@@ -57,7 +57,7 @@ class FinalFundamentals(BaseModel):
     stance: str
     covered_call_bias: str
     confidence: float
-    source: Literal["deterministic", "llm", "agentic", "unknown"] | str
+    source: Literal["det", "deterministic", "llm", "agentic", "unknown"] | str
     rationale: str | None = None
 
 

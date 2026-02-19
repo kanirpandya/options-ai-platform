@@ -26,3 +26,4 @@
             - bedrock:InvokeModel
             - bedrock:InvokeModelWithResponseStream
           Resource: "*"
+
