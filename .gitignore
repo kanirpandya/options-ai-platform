@@ -25,3 +25,4 @@ out*.json
 trace*.log
 *.log
 session-manager-plugin.pkg
+session-manager-plugin.pkg
