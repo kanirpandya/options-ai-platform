@@ -38,7 +38,19 @@ def test_analyze_missing_ticker_422_has_error_envelope(client_factory) -> None:
     client = client_factory()
     r = client.post("/v1/analyze", json={})
     assert r.status_code == 422
-    assert "detail" in r.json()
+
+    body = r.json()
+    assert body["error_code"] == "BAD_REQUEST"
+    assert body["message"] == "Request validation failed"
+    assert "request_id" in body
+
+    details = body.get("details") or {}
+    errors = details.get("errors") or []
+    assert errors, f"Expected validation errors, got: {body}"
+
+    first = errors[0]
+    assert first.get("type") == "missing"
+    assert first.get("loc") == ["body", "ticker"]
 
 
 def test_analyze_unknown_field_forbidden(client_factory) -> None:

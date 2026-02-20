@@ -11,6 +11,7 @@ from ..graph.state import (
 )
 from coveredcall_agents.fundamentals.mode import FundamentalsMode
 from coveredcall_agents.fundamentals.mode_helpers import get_fundamentals_mode
+from coveredcall_agents.trade_policy import decide_trade_action
 
 
 def fundamental_node(state: GraphState) -> dict:
@@ -110,6 +111,15 @@ def fundamental_node(state: GraphState) -> dict:
         risks=risks + warnings,
         snapshot=snap,
     )
+
+    # Phase 2: always populate action/action_reason on the report (enum-based)
+    if getattr(report, "action", None) is None or getattr(report, "action_reason", None) is None:
+        decision = decide_trade_action(
+            stance=report.stance,
+            bias=report.covered_call_bias,
+            confidence=report.confidence,
+        )
+        report = report.model_copy(update={"action": decision.action, "action_reason": decision.reason})
 
     updates["fundamentals_report"] = report
     return updates
