@@ -69,7 +69,7 @@ class FinalFundamentalsDecision(BaseModel):
 # Snapshot + quality
 # ---------------------------
 class DataQuality(BaseModel):
-    as_of: datetime
+    as_of: datetime | None = None
     is_stub: bool = True
     missing_fields: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
@@ -101,7 +101,13 @@ class FundamentalSnapshot(BaseModel):
           - If source is missing but metadata has provider, use it.
         """
         if self.as_of is None:
-            self.as_of = self.quality.as_of
+            q_as_of = getattr(self.quality, "as_of", None) if self.quality is not None else None
+            if q_as_of is not None:
+                self.as_of = q_as_of
+            else:
+                # fallback: try snapshot.as_of if present
+                snap = getattr(self, "snapshot", None)
+                self.as_of = getattr(snap, "as_of", None)
 
         if self.metadata is None:
             # best-effort: keep stable keys; callers/providers can override

@@ -28,12 +28,12 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Callable, Dict, Protocol, Type, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from coveredcall_agents.llm.providers import LLMProvider
 from coveredcall_agents.utils.logging import get_logger
 
 T = TypeVar("T", bound=BaseModel)
@@ -114,12 +114,6 @@ class LLMClient(Protocol):
     def generate_text(self, *, system: str, user: str) -> str: ...
 
 
-class LLMProvider(str, Enum):
-    OLLAMA = "ollama"
-    BEDROCK = "bedrock"
-    STUB = "stub"
-
-
 @dataclass(frozen=True)
 class LLMRuntimeConfig:
     """
@@ -131,7 +125,7 @@ class LLMRuntimeConfig:
     """
 
     provider: LLMProvider
-    model_identifier: str
+    model_identifier: str | None
 
     timeout_seconds: float
     trace_enabled: bool
@@ -154,9 +148,9 @@ class LLMRuntimeConfig:
         except ValueError as e:
             raise ValueError(f"Unsupported {ENV_LLM_PROVIDER} value: {provider_raw}") from e
 
-        model_identifier = (os.getenv(ENV_LLM_MODEL_IDENTIFIER) or "").strip()
+        model_identifier = (os.getenv(ENV_LLM_MODEL_IDENTIFIER) or "").strip() or None
 
-        if provider != LLMProvider.STUB and not model_identifier:
+        if provider not in (LLMProvider.STUB, LLMProvider.MOCK) and not model_identifier:
             raise ValueError(
                 f"{ENV_LLM_MODEL_IDENTIFIER} must be set explicitly for provider={provider.value}"
             )
@@ -415,6 +409,9 @@ def _build_ollama_client(cfg: LLMRuntimeConfig) -> OllamaClient:
     if not cfg.ollama_base_url:
         raise ValueError(f"{ENV_OLLAMA_BASE_URL} must be set for provider={LLMProvider.OLLAMA.value}")
 
+    if not cfg.model_identifier:
+        raise ValueError(f"{ENV_LLM_MODEL_IDENTIFIER} must be set for provider={LLMProvider.OLLAMA.value}")
+
     return OllamaClient(
         model_name=cfg.model_identifier,
         base_url=cfg.ollama_base_url,
@@ -425,12 +422,13 @@ def _build_ollama_client(cfg: LLMRuntimeConfig) -> OllamaClient:
 
 register_llm_provider(LLMProvider.OLLAMA, _build_ollama_client)
 
+
 def build_llm_client_from_config(runtime_config: LLMRuntimeConfig) -> LLMClient:
     """
     Construct an LLM client using a provided runtime config and provider registry.
     This is used by CLI flag-based config (dev flexibility) and tests.
     """
-    if runtime_config.provider == LLMProvider.STUB:
+    if runtime_config.provider in (LLMProvider.STUB, LLMProvider.MOCK):
         return LocalStubLLM()
 
     _ensure_provider_registered(runtime_config.provider)
@@ -444,6 +442,7 @@ def build_llm_client_from_config(runtime_config: LLMRuntimeConfig) -> LLMClient:
 
 def build_llm_client_from_env() -> LLMClient:
     return build_llm_client_from_config(LLMRuntimeConfig.from_env())
+
 
 # Backward-compatible alias
 get_llm_client_from_env = build_llm_client_from_env

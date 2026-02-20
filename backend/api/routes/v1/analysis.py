@@ -37,6 +37,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from backend.api.contracts.error_contract import ErrorResponse
 from backend.api.schemas.analysis import AnalyzeRequest
+from coveredcall_agents.llm.providers import LLMProvider
 from backend.shared.models.normalization.engine_config_mapping import (
     apply_engine_overrides_from_request,
 )
@@ -92,6 +93,93 @@ def _set_if_empty(d: Dict[str, Any], key: str, value: Any) -> None:
         d[key] = value
 
 
+def _canonicalize_llm_runtime(config: Dict[str, Any]) -> None:
+    """
+    Canonicalize LLM runtime fields into config["llm"].
+
+    IMPORTANT:
+      Intentionally OVERWRITES config["llm"]["provider"] etc when explicit overrides exist.
+      This prevents DEFAULT_CONFIG values (e.g., provider="ollama") from shadowing test/env
+      overrides like provider="mock".
+    """
+    llm_block = config.get("llm")
+    if llm_block is None or not isinstance(llm_block, dict):
+        llm_block = {}
+        config["llm"] = llm_block
+
+    client_block = llm_block.get("client")
+    if client_block is None or not isinstance(client_block, dict):
+        client_block = {}
+        llm_block["client"] = client_block
+
+    # Precedence: flat -> llm.client.* -> llm.*
+    provider_raw = (
+        config.get("llm_provider")
+        or client_block.get("provider")
+        or llm_block.get("provider")
+    )
+    model_identifier = (
+        config.get("llm_model_identifier")
+        or client_block.get("model_identifier")
+        or llm_block.get("model_identifier")
+        or client_block.get("model")
+        or llm_block.get("model")
+    )
+    timeout_seconds = (
+        config.get("llm_timeout_seconds")
+        or client_block.get("timeout_seconds")
+        or llm_block.get("timeout_seconds")
+        or client_block.get("timeout")
+        or llm_block.get("timeout")
+        or llm_block.get("timeout_s")
+    )
+    trace_enabled_raw = (
+        config.get("llm_trace_enabled")
+        or client_block.get("trace_enabled")
+        or llm_block.get("trace_enabled")
+        or client_block.get("trace")
+        or llm_block.get("trace")
+    )
+
+    # Normalize/validate provider via enum (but don't crash API if invalid)
+    provider_value: str | None = None
+    if provider_raw is not None:
+        try:
+            provider_value = LLMProvider(str(provider_raw).strip().lower()).value
+        except Exception:
+            provider_value = str(provider_raw).strip().lower()
+
+    # Normalize trace to actual bool if possible
+    trace_bool: bool | None
+    if isinstance(trace_enabled_raw, bool) or trace_enabled_raw is None:
+        trace_bool = trace_enabled_raw
+    else:
+        trace_bool = _as_bool(str(trace_enabled_raw))
+
+    # OVERWRITE canonical fields when we have values
+    if provider_value is not None:
+        llm_block["provider"] = provider_value
+        client_block["provider"] = provider_value
+
+    if model_identifier is not None:
+        llm_block["model_identifier"] = model_identifier
+        llm_block["model"] = model_identifier
+        client_block["model_identifier"] = model_identifier
+        client_block["model"] = model_identifier
+
+    if timeout_seconds is not None:
+        llm_block["timeout_seconds"] = timeout_seconds
+        llm_block["timeout"] = timeout_seconds
+        client_block["timeout_seconds"] = timeout_seconds
+        client_block["timeout"] = timeout_seconds
+
+    if trace_bool is not None:
+        llm_block["trace_enabled"] = trace_bool
+        llm_block["trace"] = trace_bool
+        client_block["trace_enabled"] = trace_bool
+        client_block["trace"] = trace_bool
+
+
 def _apply_llm_env_defaults(config: Dict[str, Any]) -> None:
     """
     Apply LLM defaults from environment variables (Copilot/infra) for API requests.
@@ -105,7 +193,7 @@ def _apply_llm_env_defaults(config: Dict[str, Any]) -> None:
     timeout_seconds_raw = os.getenv("LLM_TIMEOUT_SECONDS")
     trace_enabled_raw = os.getenv("LLM_TRACE_ENABLED")
 
-    timeout_seconds = _as_int(timeout_seconds_raw, default=30)
+    timeout_seconds = _as_int(timeout_seconds_raw, default=None)
     trace_enabled = _as_bool(trace_enabled_raw)
 
     # Log (safe): provider + last segment of model identifier only.
@@ -310,6 +398,7 @@ def _to_safe_jsonable(obj: Any) -> Any:
         },
     },
 )
+
 def analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
     try:
         from coveredcall_agents.api.run_analysis import run_analysis  # type: ignore
@@ -333,6 +422,8 @@ def analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
     mode = config.get("mode")  # "det" | "llm" | "agentic"
     if mode in ("llm", "agentic"):
         _apply_llm_env_defaults(config)
+        # Critical: ensure config["llm"]["provider"] reflects env/request overrides
+        _canonicalize_llm_runtime(config)
 
     logger.info("analysis config (pre-engine): %s", config)
 
