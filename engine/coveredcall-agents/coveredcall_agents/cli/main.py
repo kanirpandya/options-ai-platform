@@ -11,16 +11,25 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from typing import Any
 
 from coveredcall_agents.api.run_analysis import run_analysis
+from coveredcall_agents.cli.logging_setup import setup_cli_logging
 from coveredcall_agents.config.default_config import DEFAULT_CONFIG
 from coveredcall_agents.fundamentals.mode import FundamentalsMode
-
-from coveredcall_agents.cli.logging_setup import setup_cli_logging
-
+from coveredcall_agents.llm.client import (
+    ENV_LLM_MODEL_IDENTIFIER,
+    ENV_LLM_PROVIDER,
+    ENV_LLM_TIMEOUT_SECONDS,
+    ENV_LLM_TRACE_ENABLED,
+    ENV_OLLAMA_BASE_URL,
+)
 
 logger = logging.getLogger("coveredcall_agents.cli")
+
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 
 def oprint(*args, **kwargs) -> None:
@@ -38,12 +47,10 @@ def _deep_copy(obj: dict) -> dict:
     return json.loads(json.dumps(obj))
 
 
-def _maybe_dump(obj):
+def _maybe_dump(obj: Any) -> Any:
     """
     Convert Pydantic-ish objects to plain dict when possible.
-
-    Keeps the CLI JSON contract stable without coupling this module to
-    specific internal model types.
+    Keeps the CLI JSON contract stable without coupling this module to specific internal model types.
     """
     if obj is None:
         return None
@@ -52,7 +59,7 @@ def _maybe_dump(obj):
     return obj
 
 
-def _get_any(out_state, *keys):
+def _get_any(out_state: Any, *keys: str) -> Any:
     """
     Best-effort accessor for either dict-like out_state or object-like (GraphState) out_state.
     Returns the first non-None value among keys.
@@ -69,7 +76,7 @@ def _get_any(out_state, *keys):
     return None
 
 
-def _build_explain(out_state, cfg: dict) -> dict:
+def _build_explain(out_state: Any, cfg: dict) -> dict:
     """
     Build the stable JSON 'explain' contract expected by CLI regression tests.
 
@@ -90,13 +97,16 @@ def _build_explain(out_state, cfg: dict) -> dict:
     div_reasons = _get_any(out_state, "divergence_reasons") or []
     trace_nodes = _get_any(out_state, "trace_nodes") or []
 
-    # Debate artifacts (may be None unless force-debate or severity gating triggers)
     bull_case = _maybe_dump(_get_any(out_state, "bull_case"))
     bear_case = _maybe_dump(_get_any(out_state, "bear_case"))
     debate_summary = _maybe_dump(_get_any(out_state, "debate_summary"))
 
-    # Prefer config fundamentals.mode, but fall back to out_state if needed
-    mode = (cfg.get("fundamentals", {}) or {}).get("mode") or _get_any(out_state, "fundamentals_mode", "mode")
+    # Prefer config fundamentals.mode, fall back to out_state if needed
+    mode = (
+        (cfg.get("fundamentals", {}) or {}).get("mode")
+        or (DEFAULT_CONFIG.get("fundamentals", {}) or {}).get("mode")
+        or _get_any(out_state, "fundamentals_mode", "mode")
+    )
 
     return {
         "det_fundamentals": det,
@@ -204,6 +214,38 @@ def _print_pretty_fundamentals(report) -> None:
         oprint("")
 
 
+def _apply_llm_cli_overrides_to_env(args: argparse.Namespace) -> None:
+    """
+    Apply CLI LLM overrides by setting environment variables.
+
+    NOTE:
+        This should NEVER print to stdout/stderr. Keep JSON output clean.
+    """
+    if args.llm_provider:
+        provider_raw = (args.llm_provider or "").strip().lower()
+
+        # Map legacy CLI "none" to runtime "stub".
+        if provider_raw == "none":
+            os.environ[ENV_LLM_PROVIDER] = "stub"
+        else:
+            os.environ[ENV_LLM_PROVIDER] = provider_raw
+
+        if args.llm_model:
+            os.environ[ENV_LLM_MODEL_IDENTIFIER] = str(args.llm_model).strip()
+
+        # Only set base URL for ollama when provided or when we apply CLI default.
+        if provider_raw == "ollama":
+            base_url = str(args.llm_base_url or DEFAULT_OLLAMA_BASE_URL).strip()
+            os.environ[ENV_OLLAMA_BASE_URL] = base_url
+
+        if args.llm_timeout_s is not None:
+            os.environ[ENV_LLM_TIMEOUT_SECONDS] = str(float(args.llm_timeout_s))
+
+    # Keep trace behavior consistent across providers.
+    if args.trace or args.force_debate:
+        os.environ[ENV_LLM_TRACE_ENABLED] = "1"
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--ticker", required=True)
@@ -224,17 +266,22 @@ def main() -> None:
             FundamentalsMode.AGENTIC.value,
             "llm_agentic",
         ],
+        default=FundamentalsMode.DETERMINISTIC.value,
     )
 
-    p.add_argument("--llm-provider", choices=["ollama", "mock", "none"], default=None)
+    # Provider list includes bedrock, but selection remains env-driven + config["llm"] for API use.
+    p.add_argument("--llm-provider", choices=["ollama", "bedrock", "mock", "none"], default=None)
     p.add_argument("--llm-model", default=None)
-    p.add_argument("--llm-base-url", default=None)
+    p.add_argument("--llm-base-url", default=None)  # only apply when provider=ollama
     p.add_argument("--llm-timeout-s", type=float, default=None)
 
     args = p.parse_args()
 
-    # Note: quiet is handled by logging_setup module (stderr only).
+    # Configure logging first (stderr only). Quiet should suppress chatter.
     setup_cli_logging(trace=args.trace, quiet=args.quiet)
+
+    # Bridge CLI flags → env for LLM provider selection (single source of truth).
+    _apply_llm_cli_overrides_to_env(args)
 
     cfg = _deep_copy(DEFAULT_CONFIG)
 
@@ -248,7 +295,7 @@ def main() -> None:
     if args.force_debate:
         cfg.setdefault("fundamentals", {})["force_debate"] = True
 
-    # LLM settings live under config["llm"]
+    # LLM settings live under config["llm"] (useful for API + transparency; runtime client still reads env)
     if args.llm_provider:
         cfg.setdefault("llm", {})["provider"] = args.llm_provider
     if args.llm_model:
@@ -286,7 +333,6 @@ def main() -> None:
 
             payload = out_state.model_dump() if hasattr(out_state, "model_dump") else dict(out_state)
 
-            # Build explain contract once
             explain = _build_explain(out_state, cfg)
 
             # Attach explain at top-level (keeps existing payload behavior)
